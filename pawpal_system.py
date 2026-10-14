@@ -43,6 +43,7 @@ class Owner:
 
     name: str
     available_minutes: int
+    day_start_minute: int = 8 * 60  # minutes after midnight (8 * 60 = 08:00)
     preferences: List[str] = field(default_factory=list)
     pets: List[Pet] = field(default_factory=list)
 
@@ -51,13 +52,35 @@ class Owner:
         pass
 
 
+@dataclass
+class ScheduledTask:
+    """A task placed at a specific time in the daily plan."""
+
+    task: Task
+    pet: Pet
+    start_minute: int  # minutes after midnight (e.g., 480 = 08:00)
+
+    @property
+    def end_minute(self) -> int:
+        """Minute of the day when this task finishes."""
+        return self.start_minute + self.task.duration_minutes
+
+    def start_time(self) -> str:
+        """Return the start as a clock string, e.g. 480 -> "08:00"."""
+        hours, minutes = divmod(self.start_minute, 60)
+        return f"{hours:02d}:{minutes:02d}"
+
+
 class Scheduler:
     """Builds and explains a daily care plan from an owner's constraints and a pet's tasks."""
 
-    def generate_plan(self, owner: Owner, pet: Pet) -> List[Task]:
-        """Choose and order tasks that fit the owner's available time and preferences."""
+    def generate_plan(self, owner: Owner, pet: Pet) -> List[ScheduledTask]:
+        """Choose and order tasks that fit the owner's available time and preferences.
+
+        Tasks are placed back to back starting at owner.day_start_minute.
+        """
         pass
 
-    def explain_plan(self, plan: List[Task]) -> str:
+    def explain_plan(self, plan: List[ScheduledTask]) -> str:
         """Return a human-readable explanation of why each task was chosen and when."""
         pass
