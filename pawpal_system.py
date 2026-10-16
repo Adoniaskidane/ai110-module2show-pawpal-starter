@@ -1,10 +1,10 @@
 """PawPal+ logic layer: backend classes for pet care planning.
 
-Skeleton generated from diagrams/uml_draft.mmd. Method bodies are stubs.
+Classes follow diagrams/uml_draft.mmd. Scheduler methods are still stubs.
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Tuple
 
 
 @dataclass
@@ -14,10 +14,17 @@ class Task:
     title: str
     duration_minutes: int
     priority: str  # "low" | "medium" | "high"
+    frequency: str = "daily"  # "daily" | "weekly" | "once"
+    completed: bool = False
 
     def edit(self, duration_minutes: int, priority: str) -> None:
         """Update this task's duration and priority."""
-        pass
+        self.duration_minutes = duration_minutes
+        self.priority = priority
+
+    def mark_complete(self) -> None:
+        """Mark this task as done."""
+        self.completed = True
 
 
 @dataclass
@@ -30,11 +37,11 @@ class Pet:
 
     def add_task(self, task: Task) -> None:
         """Add a care task for this pet."""
-        pass
+        self.tasks.append(task)
 
     def remove_task(self, title: str) -> None:
         """Remove the task with the given title."""
-        pass
+        self.tasks = [t for t in self.tasks if t.title != title]
 
 
 @dataclass
@@ -49,7 +56,11 @@ class Owner:
 
     def add_pet(self, pet: Pet) -> None:
         """Register a pet with this owner."""
-        pass
+        self.pets.append(pet)
+
+    def get_all_tasks(self) -> List[Tuple[Pet, Task]]:
+        """Return every (pet, task) pair across all of this owner's pets."""
+        return [(pet, task) for pet in self.pets for task in pet.tasks]
 
 
 @dataclass
@@ -75,10 +86,7 @@ class Scheduler:
     """Builds and explains a daily care plan from an owner's constraints and a pet's tasks."""
 
     def generate_plan(self, owner: Owner, pet: Pet) -> List[ScheduledTask]:
-        """Choose and order tasks that fit the owner's available time and preferences.
-
-        Tasks are placed back to back starting at owner.day_start_minute.
-        """
+        """Choose, order, and time-slot tasks that fit the owner's available time."""
         pass
 
     def explain_plan(self, plan: List[ScheduledTask]) -> str:

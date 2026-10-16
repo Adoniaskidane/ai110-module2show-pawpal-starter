@@ -42,6 +42,20 @@ pip install -r requirements.txt
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
 
+## 🧩 Implementation Summary
+
+The logic layer lives in `pawpal_system.py` and is built from five classes:
+
+- **`Task`**: one care activity (title, duration, priority, frequency, completion status). `edit()` updates it, and `mark_complete()` marks it done.
+- **`Pet`**: a pet (name, species) that owns its list of tasks through `add_task()` and `remove_task()`.
+- **`Owner`**: the person doing the care. Stores their daily time budget, day start time, preferences, and pets. `get_all_tasks()` returns every `(pet, task)` pair across all pets, which is the single entry point for multi-pet data.
+- **`ScheduledTask`**: a task placed at a specific start minute for a specific pet, with `end_minute` and `start_time()` for display.
+- **`Scheduler`**: the planner. `generate_plan()` will turn the owner's tasks into a list of `ScheduledTask`s, and `explain_plan()` will describe why each was chosen. These two methods are not implemented yet.
+
+**How they work together:** an `Owner` holds `Pet`s, each `Pet` holds `Task`s, and code that needs every task asks the owner via `get_all_tasks()` instead of reaching into individual pets. Times are stored as minutes after midnight so tasks can be placed back to back with simple addition, then formatted as `HH:MM` only for display.
+
+`main.py` is a temporary demo that builds an owner with two pets and prints today's schedule. Until `Scheduler` is implemented, it uses a small helper that lists tasks back to back from the owner's day start (no sorting or time-budget check yet). `tests/test_pawpal.py` covers task completion and adding tasks to a pet.
+
 ## 🖥️ Sample Output
 
 Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
@@ -52,7 +66,17 @@ Paste a sample of your app's CLI or Streamlit output here so a reader can see wh
 #   08:00 — Morning walk (30 min) [priority: high]
 #   09:00 — Feeding (10 min) [priority: high]
 #   ...
+
+ai110-module2show-pawpal-starter$ python3 main.py
+Today's Schedule for Jhon
+========================================
+08:00  Leo      Morning walk (30 min) [priority: high]
+08:30  Leo      Feeding (10 min) [priority: high]
+08:40  Milo     Litter box cleanup (15 min) [priority: medium]
+08:55  Milo     Brushing (20 min) [priority: low]
+
 ```
+
 
 ## 🧪 Testing PawPal+
 

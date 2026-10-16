@@ -8,6 +8,7 @@ classDiagram
         +preferences: List~str~
         +pets: List~Pet~
         +add_pet(pet)
+        +get_all_tasks() List~Tuple~Pet, Task~~
     }
 
     class Pet {
@@ -22,7 +23,10 @@ classDiagram
         +title: str
         +duration_minutes: int
         +priority: str
+        +frequency: str
+        +completed: bool
         +edit(duration_minutes, priority)
+        +mark_complete()
     }
 
     class ScheduledTask {
