@@ -30,8 +30,11 @@ I chose to store times as whole minutes instead of strings like "08:00" because 
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+My conflict detection (`Scheduler.detect_conflicts()`) chooses readability over speed. It checks every pair of timed tasks with `itertools.combinations` and flags two tasks if they fall on the same day and their time windows overlap (`a.start < b.end and b.start < a.end`). That is O(n²) comparisons. An earlier version sorted the tasks by start time first and stopped comparing as soon as the next task started after the current one ended. That version is faster (roughly O(n log n)), but it only works because of the sort, and the early `break` is easy to misread or break by accident when editing the code later.
+
+This tradeoff is reasonable because a pet owner only has a handful of tasks per day. Even with 20 tasks, the pairwise check makes only 190 comparisons, which runs instantly. At that size the speed difference doesn't matter, but readable code does. Anyone can look at the overlap check and see what "conflict" means without having to reason about sort order. If PawPal+ ever had to schedule hundreds of tasks (for example, a boarding kennel), I would switch back to the sorted approach.
+
+A related choice was to check for overlapping durations rather than only exact matching start times. A 07:00 walk that lasts 30 minutes does conflict with a 07:15 task, so checking only exact start times would miss real clashes. The cost is that tasks with no set time are skipped entirely, so the scheduler can't warn about them.
 
 ---
 
