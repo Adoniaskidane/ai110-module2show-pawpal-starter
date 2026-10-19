@@ -13,6 +13,10 @@ classDiagram
         +pets: List~Pet~
         +add_pet(pet)
         +get_all_tasks() list[tuple[Pet, Task]]
+        +to_dict() dict
+        +from_dict(data)$ Owner
+        +save_to_json(path)
+        +load_from_json(path)$ Owner
     }
 
     class Pet {

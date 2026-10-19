@@ -1,10 +1,11 @@
 """Tests for the PawPal+ logic layer."""
 
+import json
 from datetime import date
 
 import pytest
 
-from pawpal_system import Owner, Pet, Scheduler, Task
+from pawpal_system import SCHEMA_VERSION, Owner, Pet, Scheduler, Task
 
 DAY = date(2026, 10, 18)
 
@@ -323,3 +324,113 @@ def test_filter_tasks_for_pet_with_no_tasks_returns_empty(scheduler):
 
     assert scheduler.filter_tasks(owner, pet_name="Leo") == []
     assert owner.get_all_tasks() == []
+
+
+# --- Data persistence (data.json) ---
+
+
+def make_saved_household():
+    rex = Pet("Rex", "dog")
+    rex.add_task(Task("Walk", 30, "high", time="07:00", due_date=DAY))
+    rex.add_task(Task("Bath", 45, "low", frequency="once", completed=True, due_date=DAY))
+    whiskers = Pet("Whiskers", "cat")
+    whiskers.add_task(Task("Brush", 10, "medium", frequency="weekly", due_date=DAY))
+    owner = Owner("Sam", 90, day_start_minute=7 * 60, preferences=["mornings"])
+    owner.add_pet(rex)
+    owner.add_pet(whiskers)
+    return owner
+
+
+def test_save_and_load_round_trip_keeps_everything(tmp_path):
+    path = tmp_path / "data.json"
+    owner = make_saved_household()
+
+    owner.save_to_json(path)
+    loaded = Owner.load_from_json(path)
+
+    assert loaded == owner  # dataclass equality compares every field, nested pets and tasks included
+    assert isinstance(loaded.pets[0].tasks[0].due_date, date)
+
+
+def test_load_missing_file_returns_none(tmp_path):
+    assert Owner.load_from_json(tmp_path / "nope.json") is None
+
+
+def test_saved_file_is_readable_json_with_version(tmp_path):
+    path = tmp_path / "data.json"
+    make_saved_household().save_to_json(path)
+
+    payload = json.loads(path.read_text())
+
+    assert payload["version"] == SCHEMA_VERSION
+    assert payload["owner"]["pets"][0]["tasks"][0]["due_date"] == "2026-10-18"
+
+
+def test_save_leaves_no_temp_files_and_overwrites(tmp_path):
+    path = tmp_path / "data.json"
+    owner = make_saved_household()
+    owner.save_to_json(path)
+
+    owner.pets[0].remove_task("Walk")
+    owner.save_to_json(path)
+
+    assert [p.name for p in tmp_path.iterdir()] == ["data.json"]
+    assert titles(Owner.load_from_json(path).get_all_tasks()) == ["Bath", "Brush"]
+
+
+def test_recurring_task_completed_after_reload_still_regenerates(tmp_path, scheduler):
+    path = tmp_path / "data.json"
+    make_saved_household().save_to_json(path)
+    owner = Owner.load_from_json(path)
+    whiskers = owner.pets[1]
+
+    next_task = scheduler.mark_task_complete(whiskers, whiskers.tasks[0])
+
+    assert next_task.due_date == date(2026, 10, 25)
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "{not json",
+        "[]",
+        '{"version": 1}',
+        '{"version": 1, "owner": {"name": "Sam"}}',
+        '{"version": 1, "owner": {"name": "Sam", "available_minutes": 60, '
+        '"pets": [{"name": "Rex", "tasks": [{"title": "Walk", "duration_minutes": 5, '
+        '"priority": "high", "due_date": "not-a-date"}]}]}}',
+    ],
+)
+def test_load_corrupt_file_raises_value_error(tmp_path, contents):
+    path = tmp_path / "data.json"
+    path.write_text(contents)
+
+    with pytest.raises(ValueError):
+        Owner.load_from_json(path)
+
+
+def test_load_rejects_newer_schema_version(tmp_path):
+    path = tmp_path / "data.json"
+    path.write_text(json.dumps({"version": SCHEMA_VERSION + 1, "owner": {"name": "Sam", "available_minutes": 60}}))
+
+    with pytest.raises(ValueError, match="version"):
+        Owner.load_from_json(path)
+
+
+def test_load_fills_defaults_and_ignores_unknown_keys(tmp_path):
+    path = tmp_path / "data.json"
+    path.write_text(json.dumps({
+        "owner": {
+            "name": "Sam",
+            "available_minutes": 60,
+            "favorite_color": "blue",
+            "pets": [{"name": "Rex", "tasks": [{"title": "Walk", "duration_minutes": 5, "priority": "high"}]}],
+        }
+    }))
+
+    owner = Owner.load_from_json(path)
+    task = owner.pets[0].tasks[0]
+
+    assert owner.day_start_minute == 8 * 60
+    assert owner.pets[0].species == "other"
+    assert (task.frequency, task.completed, task.time, task.due_date) == ("daily", False, "", date.today())

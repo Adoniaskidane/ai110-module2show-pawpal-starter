@@ -69,6 +69,7 @@ The diagram source is [`diagrams/uml_final.mmd`](diagrams/uml_final.mmd). The or
 - **Daily and weekly recurrence:** `Scheduler.mark_task_complete()` marks a task done and, if it repeats, adds a fresh copy due 1 day (daily) or 7 days (weekly) later, calculated with `timedelta` so month and year rollover work. One-time tasks don't repeat, and completing the same task twice doesn't create a duplicate.
 - **Time validation:** `Task.minutes_after_midnight()` parses times with `datetime.strptime(..., "%H:%M")`, so impossible times like `"25:00"` or `"7pm"` are rejected. The app shows a clear error instead of saving a bad task.
 - **Edit and remove tasks (app only):** the Streamlit app can move an unfinished task to a new start time (validated the same way) or remove it, which is how an owner resolves a conflict warning. Removal deletes only the selected task, so tomorrow's copy of a daily task with the same title is kept.
+- **Data persistence:** pets, tasks, and owner settings are saved to `data.json` and reloaded the next time the app starts. See **💾 Data Persistence** below.
 - **Daily time budget check (app only):** the Streamlit app adds up today's unfinished task minutes and warns when they exceed the owner's available minutes.
 
 **Not built yet:** `Scheduler.generate_plan()` and `explain_plan()`, which would choose tasks by priority to fit the time budget and explain each choice, are still stubs. For now, today's schedule (in both the app and `main.py`) is every unfinished task due today, in time order.
@@ -85,13 +86,14 @@ python -m pytest
 
 ### What the tests cover
 
-The 37 tests in `tests/test_pawpal.py` cover both the happy path and edge cases for each scheduler feature:
+The 49 tests in `tests/test_pawpal.py` cover both the happy path and edge cases for each scheduler feature:
 
 - **Sorting:** tasks come back in chronological order, by date first and then by time. Tasks with no time go last within their own day. Tasks with identical times keep their original order. `"7:30"` and `"07:30"` sort the same, and the input list is not modified.
 - **Recurrence:** completing a daily task creates a new, incomplete copy for the next day, and a weekly task repeats 7 days later. Dates roll over correctly at year end and in leap years. `"once"` tasks and unknown frequencies don't repeat, and completing a task twice doesn't create a duplicate.
 - **Conflict detection:** two tasks at the exact same time are flagged, as are partial overlaps, one task inside another, and overlaps between different pets. Back-to-back tasks and the same time on different days are not flagged. Completed and untimed tasks are ignored. An invalid time like `"25:00"` produces a warning instead of a crash.
 - **Filtering:** by pet name (case-insensitive), by completion status, or both.
 - **Empty data:** a pet with no tasks, an owner with no pets, an empty list, and a pet name that doesn't exist.
+- **Persistence:** a save/load round trip restores every field (including dates), a missing file loads as `None`, saves leave no temp files behind, and corrupt or newer-version files raise `ValueError` instead of loading bad data.
 - **Time parsing:** `"07:30"` converts to 450 minutes, and impossible times like `"25:00"`, `"12:60"` or `"7pm"` are rejected.
 
 All tests use a fixed date, so results don't depend on the day you run them.
@@ -176,6 +178,42 @@ Marks a task done and, if it repeats, adds its next occurrence to the pet.
 - `"once"` tasks are just marked complete; no new task is created and the method returns `None`.
 - Completing a task that is already done does nothing and returns `None`, so a double click can't create a duplicate next occurrence.
 - Calling `Task.mark_complete()` directly still only marks the task done, without creating a next occurrence.
+
+## 💾 Data Persistence
+
+PawPal+ remembers your pets and tasks between runs by saving them to `data.json` in the project folder.
+
+- **Serialization:** `Task`, `Pet`, and `Owner` each have `to_dict()` / `from_dict()`. Dates are stored as ISO strings (`"2026-10-19"`) and turned back into `date` objects on load. Missing optional fields fall back to their defaults and unknown keys are ignored, so older files still load.
+- **Saving:** `Owner.save_to_json(path="data.json")` writes the owner, every pet, and every task, plus a `version` number and a `saved_at` timestamp. The write is **atomic**: it goes to a temp file first and then replaces `data.json` in one step, so a crash mid-save can't leave a half-written file.
+- **Loading:** `Owner.load_from_json(path="data.json")` returns the saved `Owner`, or `None` on the first run when there's no file yet. Bad JSON, missing fields, bad dates, or a file from a newer schema version raise `ValueError`.
+- **In the app:** data loads automatically on startup and auto-saves after any change (only when something actually changed). If `data.json` is damaged, the app moves it to `data.json.corrupt-<timestamp>`, shows a warning, and starts fresh rather than crashing or overwriting it. The sidebar shows when data was last saved, offers a **Download backup** button, and has a confirm-protected **Start over** to erase everything. To restore a backup, rename it to `data.json`.
+
+Example `data.json`:
+
+```json
+{
+  "version": 1,
+  "saved_at": "2026-10-19T08:15:02",
+  "owner": {
+    "name": "Jordan",
+    "available_minutes": 120,
+    "day_start_minute": 480,
+    "preferences": [],
+    "pets": [
+      {
+        "name": "Mochi",
+        "species": "dog",
+        "tasks": [
+          {"title": "Morning walk", "duration_minutes": 20, "priority": "high", "frequency": "daily",
+           "completed": false, "time": "07:30", "due_date": "2026-10-19"}
+        ]
+      }
+    ]
+  }
+}
+```
+
+`data.json` is listed in `.gitignore`, since it holds your personal data rather than code.
 
 ## 📸 Demo Walkthrough
 

@@ -1,12 +1,20 @@
 """PawPal+ logic layer: backend classes for pet care planning.
 
 Classes follow diagrams/uml_final.mmd. Scheduler.generate_plan() and explain_plan() are still stubs.
+Owner.save_to_json() / Owner.load_from_json() persist everything to data.json between runs.
 """
 
-from dataclasses import dataclass, field, replace
+import json
+import os
+import tempfile
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta
 from itertools import combinations
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+DATA_FILE = "data.json"
+SCHEMA_VERSION = 1  # bump when the saved JSON layout changes
 
 
 @dataclass
@@ -62,6 +70,33 @@ class Task:
             return None
         return replace(self, completed=False, due_date=self.due_date + intervals[self.frequency])
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert this task to JSON-safe data; due_date becomes an ISO string like "2026-10-19"."""
+        data = asdict(self)
+        data["due_date"] = self.due_date.isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Task":
+        """Rebuild a Task from to_dict() output.
+
+        Missing optional fields fall back to their defaults and unknown keys are
+        ignored, so older or newer data files still load.
+
+        Raises:
+            KeyError: If a required field (title, duration_minutes, priority) is missing.
+            ValueError: If due_date isn't an ISO date or duration isn't a number.
+        """
+        return cls(
+            title=str(data["title"]),
+            duration_minutes=int(data["duration_minutes"]),
+            priority=str(data["priority"]),
+            frequency=str(data.get("frequency", "daily")),
+            completed=bool(data.get("completed", False)),
+            time=str(data.get("time", "")),
+            due_date=date.fromisoformat(data["due_date"]) if data.get("due_date") else date.today(),
+        )
+
 
 @dataclass
 class Pet:
@@ -78,6 +113,19 @@ class Pet:
     def remove_task(self, title: str) -> None:
         """Remove the task with the given title."""
         self.tasks = [t for t in self.tasks if t.title != title]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert this pet and its tasks to JSON-safe data."""
+        return {"name": self.name, "species": self.species, "tasks": [t.to_dict() for t in self.tasks]}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Pet":
+        """Rebuild a Pet (and its tasks) from to_dict() output."""
+        return cls(
+            name=str(data["name"]),
+            species=str(data.get("species", "other")),
+            tasks=[Task.from_dict(t) for t in data.get("tasks", [])],
+        )
 
 
 @dataclass
@@ -97,6 +145,80 @@ class Owner:
     def get_all_tasks(self) -> List[Tuple[Pet, Task]]:
         """Return every (pet, task) pair across all of this owner's pets."""
         return [(pet, task) for pet in self.pets for task in pet.tasks]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert this owner, their pets, and every task to JSON-safe data."""
+        return {
+            "name": self.name,
+            "available_minutes": self.available_minutes,
+            "day_start_minute": self.day_start_minute,
+            "preferences": list(self.preferences),
+            "pets": [p.to_dict() for p in self.pets],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Owner":
+        """Rebuild an Owner (with pets and tasks) from to_dict() output."""
+        return cls(
+            name=str(data["name"]),
+            available_minutes=int(data["available_minutes"]),
+            day_start_minute=int(data.get("day_start_minute", 8 * 60)),
+            preferences=[str(p) for p in data.get("preferences", [])],
+            pets=[Pet.from_dict(p) for p in data.get("pets", [])],
+        )
+
+    def save_to_json(self, path: Union[str, Path] = DATA_FILE) -> None:
+        """Save this owner, their pets, and all tasks to a JSON file.
+
+        The file is written atomically: data goes to a temporary file in the same
+        folder, which then replaces the target in one step. If the program crashes
+        mid-save, the previous data.json is left intact instead of half-written.
+
+        Args:
+            path: Where to write; defaults to "data.json" in the working directory.
+        """
+        path = Path(path)
+        payload = {
+            "version": SCHEMA_VERSION,
+            "saved_at": datetime.now().isoformat(timespec="seconds"),
+            "owner": self.to_dict(),
+        }
+        fd, tmp_name = tempfile.mkstemp(dir=path.parent or ".", prefix=f".{path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                json.dump(payload, tmp, indent=2)
+            os.replace(tmp_name, path)
+        except BaseException:
+            os.unlink(tmp_name)
+            raise
+
+    @classmethod
+    def load_from_json(cls, path: Union[str, Path] = DATA_FILE) -> Optional["Owner"]:
+        """Load an owner saved by save_to_json().
+
+        Args:
+            path: The JSON file to read; defaults to "data.json".
+
+        Returns:
+            The restored Owner, or None if the file doesn't exist yet (first run).
+
+        Raises:
+            ValueError: If the file isn't valid PawPal+ data (bad JSON, missing
+                fields, wrong types) or was saved by a newer schema version.
+        """
+        path = Path(path)
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            version = payload.get("version", 1)
+            if version > SCHEMA_VERSION:
+                raise ValueError(f"{path} uses data version {version}; this PawPal+ supports up to {SCHEMA_VERSION}.")
+            return cls.from_dict(payload["owner"])
+        except ValueError:
+            raise  # includes json.JSONDecodeError and bad dates/numbers
+        except (KeyError, TypeError, AttributeError) as err:
+            raise ValueError(f"{path} is not valid PawPal+ data: {err!r}") from err
 
 
 @dataclass

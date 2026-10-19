@@ -1,8 +1,10 @@
-from datetime import date
+import json
+import os
+from datetime import date, datetime
 
 import streamlit as st
 
-from pawpal_system import Owner, Pet, Scheduler, Task
+from pawpal_system import DATA_FILE, SCHEMA_VERSION, Owner, Pet, Scheduler, Task
 
 PRIORITY_LABELS = {"high": "🔴 high", "medium": "🟡 medium", "low": "🟢 low"}
 
@@ -44,12 +46,51 @@ At minimum, your system should:
 
 st.divider()
 
+
+def default_owner() -> Owner:
+    return Owner(name="Jordan", available_minutes=120)
+
+
 # Streamlit reruns this whole script on every interaction, so the Owner lives in
-# st.session_state (a per-session dict) and is only created on the first run.
+# st.session_state (a per-session dict). On the first run it's loaded from data.json,
+# so pets and tasks survive closing the app.
 if "owner" not in st.session_state:
-    st.session_state.owner = Owner(name="Jordan", available_minutes=120)
+    try:
+        loaded = Owner.load_from_json(DATA_FILE)
+    except ValueError as err:
+        # Don't crash or silently overwrite a damaged file: set it aside and start fresh.
+        backup = f"{DATA_FILE}.corrupt-{datetime.now():%Y%m%d-%H%M%S}"
+        os.replace(DATA_FILE, backup)
+        st.session_state.load_warning = (
+            f"Couldn't read {DATA_FILE} ({err}). It was moved to {backup} and PawPal+ started fresh."
+        )
+        loaded = None
+    st.session_state.owner = loaded or default_owner()
+    # Snapshot of what's on disk; autosave() only writes when the owner differs from it.
+    st.session_state.saved_snapshot = st.session_state.owner.to_dict() if loaded else None
+    st.session_state.saved_at = None
 
 owner: Owner = st.session_state.owner
+
+
+def autosave() -> None:
+    """Write data.json if anything changed since the last save."""
+    snapshot = owner.to_dict()
+    if snapshot == st.session_state.saved_snapshot:
+        return
+    if st.session_state.saved_snapshot is None and snapshot == default_owner().to_dict():
+        return  # untouched first run: nothing worth saving yet
+    try:
+        owner.save_to_json(DATA_FILE)
+    except OSError as err:
+        st.error(f"Couldn't save to {DATA_FILE}: {err}")
+        return
+    st.session_state.saved_snapshot = snapshot
+    st.session_state.saved_at = datetime.now()
+
+
+if "load_warning" in st.session_state:
+    st.warning(st.session_state.pop("load_warning"))
 
 st.subheader("Owner")
 owner.name = st.text_input("Owner name", value=owner.name)
@@ -199,6 +240,7 @@ if owner.get_all_tasks():
             if message:
                 # Rerun so the tables above refresh; keep the message so it survives the rerun.
                 st.session_state.flash = message
+                autosave()  # st.rerun() stops this run before the save at the bottom
                 st.rerun()
     else:
         st.success("Everything is done. 🎉")
@@ -244,3 +286,36 @@ if todays_tasks:
     st.table(task_rows(scheduler.sort_by_time(todays_tasks)))
 else:
     st.info("Nothing left to do today.")
+
+# Save once per run, after every widget and form above has had a chance to change the owner.
+autosave()
+
+with st.sidebar:
+    st.header("💾 Saved data")
+    if st.session_state.saved_at:
+        st.caption(f"Auto-saved to `{DATA_FILE}` at {st.session_state.saved_at:%H:%M:%S}.")
+    elif st.session_state.saved_snapshot is not None:
+        st.caption(f"Loaded from `{DATA_FILE}`. Changes save automatically.")
+    else:
+        st.caption(f"Nothing saved yet. Your pets and tasks save to `{DATA_FILE}` automatically.")
+
+    pet_count, task_count = len(owner.pets), len(owner.get_all_tasks())
+    st.markdown(f"**{pet_count}** pet(s), **{task_count}** task(s)")
+
+    st.download_button(
+        "Download backup",
+        data=json.dumps({"version": SCHEMA_VERSION, "owner": owner.to_dict()}, indent=2),
+        file_name=f"pawpal-backup-{date.today()}.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+
+    with st.expander("Start over"):
+        st.caption(f"Deletes every pet and task and removes `{DATA_FILE}`. Rename a backup to `{DATA_FILE}` to restore it.")
+        confirm = st.checkbox("Yes, erase my PawPal+ data", key="confirm_erase")
+        if st.button("Erase all data", type="primary", disabled=not confirm, use_container_width=True):
+            if os.path.exists(DATA_FILE):
+                os.remove(DATA_FILE)
+            for key in ("owner", "saved_snapshot", "saved_at", "flash", "confirm_erase"):
+                st.session_state.pop(key, None)
+            st.rerun()
