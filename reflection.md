@@ -52,6 +52,20 @@ I did not accept all of the AI's suggestions at once. It recommended three chang
 
 To verify the results, I ran `python main.py` and checked that the schedule included tasks from both pets with times that did not overlap. I also ran `python -m pytest` and confirmed that both tests passed. I reviewed the UML diff to make sure the diagram matched the code and did not show a design I had not built yet.
 
+**c. AI strategy**
+
+*Most effective features.* Three Claude Code features helped the most when building the scheduler:
+
+- **Checking code against the spec.** Pasting the assignment requirements and asking "did I miss anything?" gave me a concrete gap list (missing `Task` fields, no `Owner.get_all_tasks()`) instead of generic advice.
+- **Running the code, not just writing it.** It ran `main.py`, the pytest suite, and scripted runs of the Streamlit app, so claims like "the conflict warning clears after you move a task" were checked before they went into my README. It also rendered the UML diagram to a PNG and looked at it, which caught two problems I wouldn't have seen in the `.mmd` text: a Mermaid syntax issue with `List~Tuple~Pet, Task~~` and an overlapping, cut-off layout.
+- **Flagging problems instead of quietly working around them.** While writing the demo walkthrough, it pointed out that the app's conflict tip told users to change a task's time even though the app had no way to edit a task, and that `main.py`'s "Today's Schedule" listed an evening walk at 08:00. I decided to fix both, which led to the **Update a task** form (mark done, change time, remove).
+
+*A suggestion I rejected or modified.* The AI suggested three changes to my skeleton, and I only accepted two. I did not let it change `generate_plan()` to read tasks from the owner, because <!-- your reason, e.g. "I wanted to design the planning algorithm myself" -->. The result was cleaner than if I'd said yes: instead of inventing a scheduler, `main.py` used a small, clearly labeled stand-in, and later I replaced that with my own `filter_tasks()` and `sort_by_time()` methods. I also reviewed the details of what it built. For example, it wrote **Remove task** in the app with `pet.tasks.remove(task)` instead of my existing `Pet.remove_task(title)`, because removing by title would also delete tomorrow's copy of a recurring task with the same name. I kept that, but it showed me my `remove_task()` design has a weakness I should fix in the class itself.
+
+*Separate chat sessions per phase.* <!-- Confirm this matches what you actually did, and adjust. --> I used a separate session for each phase (design, logic layer, smarter scheduling, UI and documentation) and committed my work at the end of each one. That kept each conversation focused on one goal, so the AI wasn't carrying old assumptions from an earlier phase, like the original stub version of the scheduler. The commits also gave me clean checkpoints: when the AI rewrote `app.py` before I had committed my test suite, I had it undo the change, committed the tests on their own, and then had it put the UI change back. Each commit in my history matches one phase of work.
+
+*Being the lead architect.* The AI can write a lot of correct code quickly, but it can't decide what the system should be. That was my job: keeping data (`Owner`, `Pet`, `Task`) separate from logic (`Scheduler`), choosing a readable O(n²) conflict check over a faster but fragile one, and deciding which suggestions to accept and which to hold back. I learned to give it the exact requirements, review its changes before accepting them, make it prove things by running them, and keep my UML and README matched to the code that actually exists. Treating the AI as a fast, careful teammate whose work I review, rather than an authority, is what kept the design clean.
+
 ---
 
 ## 4. Testing and Verification

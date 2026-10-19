@@ -1,6 +1,6 @@
 """PawPal+ logic layer: backend classes for pet care planning.
 
-Classes follow diagrams/uml_draft.mmd. Scheduler methods are still stubs.
+Classes follow diagrams/uml_final.mmd. Scheduler.generate_plan() and explain_plan() are still stubs.
 """
 
 from dataclasses import dataclass, field, replace

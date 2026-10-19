@@ -54,29 +54,26 @@ The logic layer lives in `pawpal_system.py` and is built from five classes:
 
 **How they work together:** an `Owner` holds `Pet`s, each `Pet` holds `Task`s, and code that needs every task asks the owner via `get_all_tasks()` instead of reaching into individual pets. Times are stored as minutes after midnight so tasks can be placed back to back with simple addition, then formatted as `HH:MM` only for display.
 
-`main.py` is a temporary demo that builds an owner with two pets and prints today's schedule. Until `Scheduler` is implemented, it uses a small helper that lists tasks back to back from the owner's day start (no sorting or time-budget check yet). `tests/test_pawpal.py` covers sorting, filtering, conflict detection, and recurring tasks (see **Testing PawPal+** below).
+![PawPal+ UML class diagram](diagrams/uml_final.png)
 
-## 🖥️ Sample Output
+The diagram source is [`diagrams/uml_final.mmd`](diagrams/uml_final.mmd). The original Phase 1 draft is kept in [`diagrams/uml_draft.mmd`](diagrams/uml_draft.mmd) for comparison.
 
-Paste a sample of your app's CLI or Streamlit output here so a reader can see what a generated plan looks like:
+`main.py` is a command-line demo of the `Scheduler` features: it builds an owner with two pets, completes two recurring tasks, then prints the tasks sorted, filtered, and checked for conflicts (see **Demo Walkthrough** below). `tests/test_pawpal.py` covers sorting, filtering, conflict detection, and recurring tasks (see **Testing PawPal+** below).
 
-```
-# e.g.:
-# Daily plan for Biscuit (Golden Retriever):
-#   08:00 — Morning walk (30 min) [priority: high]
-#   09:00 — Feeding (10 min) [priority: high]
-#   ...
+## ✨ Features
 
-ai110-module2show-pawpal-starter$ python3 main.py
-Today's Schedule for Jhon
-========================================
-08:00  Leo      Morning walk (30 min) [priority: high]
-08:30  Leo      Feeding (10 min) [priority: high]
-08:40  Milo     Litter box cleanup (15 min) [priority: medium]
-08:55  Milo     Brushing (20 min) [priority: low]
+- **Multi-pet task tracking:** one owner can have several pets, each with its own task list. `Owner.get_all_tasks()` returns every task paired with its pet, so the scheduler works across all pets at once.
+- **Sorting by time:** `Scheduler.sort_by_time()` orders tasks by due date, then by start time converted to minutes after midnight. Comparing numbers instead of text means `"7:30"` correctly comes before `"18:00"`. Tasks with no set time go to the end of their day, and tasks with the same time keep the order they were added in.
+- **Filtering by pet and status:** `Scheduler.filter_tasks()` narrows the list to one pet (case-insensitive), to done or unfinished tasks, or to both at once. Filtered results can be passed straight into the sort.
+- **Conflict warnings:** `Scheduler.detect_conflicts()` flags any two unfinished tasks on the same day whose time windows overlap, using the interval test `a.start < b.end and b.start < a.end`. It catches partial overlaps and clashes between different pets, while back-to-back tasks are allowed. It returns readable warnings instead of raising an error, so a bad schedule never crashes the app.
+- **Daily and weekly recurrence:** `Scheduler.mark_task_complete()` marks a task done and, if it repeats, adds a fresh copy due 1 day (daily) or 7 days (weekly) later, calculated with `timedelta` so month and year rollover work. One-time tasks don't repeat, and completing the same task twice doesn't create a duplicate.
+- **Time validation:** `Task.minutes_after_midnight()` parses times with `datetime.strptime(..., "%H:%M")`, so impossible times like `"25:00"` or `"7pm"` are rejected. The app shows a clear error instead of saving a bad task.
+- **Edit and remove tasks (app only):** the Streamlit app can move an unfinished task to a new start time (validated the same way) or remove it, which is how an owner resolves a conflict warning. Removal deletes only the selected task, so tomorrow's copy of a daily task with the same title is kept.
+- **Daily time budget check (app only):** the Streamlit app adds up today's unfinished task minutes and warns when they exceed the owner's available minutes.
 
-```
+**Not built yet:** `Scheduler.generate_plan()` and `explain_plan()`, which would choose tasks by priority to fit the time budget and explain each choice, are still stubs. For now, today's schedule (in both the app and `main.py`) is every unfinished task due today, in time order.
 
+See **Smarter Scheduling** below for how each algorithm works.
 
 ## 🧪 Testing PawPal+
 
@@ -182,12 +179,120 @@ Marks a task done and, if it repeats, adds its next occurrence to the pet.
 
 ## 📸 Demo Walkthrough
 
-Describe your app in numbered steps so a reader can follow along without watching a video:
+### Running the app
 
-1. <!-- Describe this step -->
-2. <!-- Describe this step -->
-3. <!-- Describe this step -->
-4. <!-- Describe this step -->
-5. <!-- Add more steps as needed -->
+```bash
+streamlit run app.py
+```
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
+The app is a single page with four sections, from top to bottom:
+
+| Section | What you can do |
+|---------|-----------------|
+| **Owner** | Set the owner's name and how many minutes they have for pet care today. |
+| **Pets** | Add a pet with a name and species (dog, cat, other). Empty or duplicate names are rejected. A table lists each pet and how many tasks it has. |
+| **Tasks** | Add a task for a chosen pet: title, duration, optional start time (`HH:MM`), priority, and how often it repeats (daily, weekly, once). Under **Find tasks**, filter by pet and by status (To do / Done / All); results appear in a table sorted by date and time, with priority shown as 🔴 high / 🟡 medium / 🟢 low. Under **Update a task**, pick an unfinished task and either **Mark done**, **Change time** (enter a new `HH:MM`, or leave blank for anytime), or **Remove task**. |
+| **Today's Schedule** | See conflict warnings, a summary of tasks today vs. minutes needed vs. minutes available, a warning if today's tasks don't fit the time budget, and today's unfinished tasks in time order. |
+
+### Example workflow
+
+1. **Set up the owner.** Leave the owner as Jordan with 120 available minutes.
+2. **Add two pets.** Add Mochi (dog) and Luna (cat). Both appear in the pets table with 0 tasks.
+3. **Add tasks.**
+   - Mochi: "Morning walk", 30 min, `07:00`, high, daily
+   - Mochi: "Medication", 5 min, `07:15`, high, daily
+   - Luna: "Feeding", 10 min, `07:30`, high, daily
+   - Luna: "Brushing", 20 min, no start time, low, weekly
+   - Luna: "Play time" at `7pm` is rejected with: *'7pm' isn't a valid time. Use 24-hour HH:MM, like 07:30 or 18:00.*
+4. **View the sorted task list.** **Find tasks** shows the four tasks in time order: 07:00 walk, 07:15 medication, 07:30 feeding, and Brushing last, marked "anytime" because it has no set time.
+5. **Check today's schedule.** A yellow warning appears: **1 scheduling conflict(s) found**, followed by *Mochi - 'Morning walk' (07:00) overlaps 'Medication' (07:15)* and the date, plus a tip to fix it under **Update a task**. Luna's 07:30 feeding is *not* flagged, because it starts exactly when the walk ends. The summary shows 4 tasks today, 65 minutes needed, and 120 available.
+6. **Fix the conflict.** Under **Update a task**, choose Mochi's Medication, enter `07:45` as the new start time, and click **Change time**. The app confirms *Moved Mochi's 'Medication' to 07:45.* and the warning is replaced by *No time conflicts. Every timed task has its own slot.* An invalid time like `7pm` is rejected here too, and the task keeps its old time.
+7. **Complete a recurring task.** Choose Mochi's Morning walk and click **Mark done**. The app confirms: *Nice! 'Morning walk' is done for Mochi. The next one is scheduled for Monday, Oct 19.* (always the next day for a daily task). Today's summary drops to 3 tasks and 35 minutes, and tomorrow's Morning walk appears in **Find tasks** as a new to-do.
+8. **Remove a task.** Choose Luna's Brushing and click **Remove task**. The app confirms *Removed Luna's 'Brushing'.* and today's summary drops to 2 tasks and 15 minutes.
+
+### Scheduler behaviors shown
+
+- **Sorting:** tasks are always listed by date, then time, with untimed tasks at the end of each day (`sort_by_time`).
+- **Filtering:** the pet and status filters, the "Update a task" list (unfinished tasks only), and today's schedule all use `filter_tasks`.
+- **Conflict warnings:** overlapping tasks are flagged with the pet, both task names, and both times. Back-to-back tasks and completed tasks are not flagged (`detect_conflicts`).
+- **Recurrence:** completing a daily or weekly task automatically creates the next one with a later due date (`mark_task_complete`).
+- **Validation:** invalid times are rejected when a task is added or its time is changed (`minutes_after_midnight`).
+
+### Sample CLI output
+
+`main.py` runs the same scheduler features without the UI. It sets up Jhon with a dog (Leo) and a cat (Milo), adds tasks out of time order, includes two deliberate clashes, and completes one daily task (Leo's Feeding) and one weekly task (Milo's Brushing). Dates depend on the day you run it.
+
+```
+$ python main.py
+All tasks (insertion order)
+----------------------------------------
+  18:00  Leo    Evening walk         due 2026-10-18  [todo]
+  07:30  Leo    Feeding              due 2026-10-18  [done]
+  07:00  Leo    Morning walk         due 2026-10-18  [todo]
+  07:00  Leo    Medication           due 2026-10-18  [todo]
+  08:00  Leo    Vet call             due 2026-10-18  [todo]
+  07:30  Leo    Feeding              due 2026-10-19  [todo]
+  --:--  Milo   Brushing             due 2026-10-18  [done]
+  12:15  Milo   Litter box cleanup   due 2026-10-18  [todo]
+  08:00  Milo   Feeding              due 2026-10-18  [todo]
+  --:--  Milo   Brushing             due 2026-10-25  [todo]
+
+All tasks sorted by time
+----------------------------------------
+  07:00  Leo    Morning walk         due 2026-10-18  [todo]
+  07:00  Leo    Medication           due 2026-10-18  [todo]
+  07:30  Leo    Feeding              due 2026-10-18  [done]
+  08:00  Leo    Vet call             due 2026-10-18  [todo]
+  08:00  Milo   Feeding              due 2026-10-18  [todo]
+  12:15  Milo   Litter box cleanup   due 2026-10-18  [todo]
+  18:00  Leo    Evening walk         due 2026-10-18  [todo]
+  --:--  Milo   Brushing             due 2026-10-18  [done]
+  07:30  Leo    Feeding              due 2026-10-19  [todo]
+  --:--  Milo   Brushing             due 2026-10-25  [todo]
+
+Milo's tasks only
+----------------------------------------
+  --:--  Milo   Brushing             due 2026-10-18  [done]
+  12:15  Milo   Litter box cleanup   due 2026-10-18  [todo]
+  08:00  Milo   Feeding              due 2026-10-18  [todo]
+  --:--  Milo   Brushing             due 2026-10-25  [todo]
+
+Incomplete tasks, sorted
+----------------------------------------
+  07:00  Leo    Morning walk         due 2026-10-18  [todo]
+  07:00  Leo    Medication           due 2026-10-18  [todo]
+  08:00  Leo    Vet call             due 2026-10-18  [todo]
+  08:00  Milo   Feeding              due 2026-10-18  [todo]
+  12:15  Milo   Litter box cleanup   due 2026-10-18  [todo]
+  18:00  Leo    Evening walk         due 2026-10-18  [todo]
+  07:30  Leo    Feeding              due 2026-10-19  [todo]
+  --:--  Milo   Brushing             due 2026-10-25  [todo]
+
+Completed tasks
+----------------------------------------
+  07:30  Leo    Feeding              due 2026-10-18  [done]
+  --:--  Milo   Brushing             due 2026-10-18  [done]
+
+Schedule conflicts
+----------------------------------------
+  WARNING: Leo - 'Morning walk' (07:00) overlaps 'Medication' (07:00) on 2026-10-18.
+  WARNING: Leo and Milo - 'Vet call' (08:00) overlaps 'Feeding' (08:00) on 2026-10-18.
+
+Today's Schedule for Jhon
+========================================
+07:00    Leo    Morning walk (30 min) [priority: high]
+07:00    Leo    Medication (5 min) [priority: high]
+08:00    Leo    Vet call (20 min) [priority: medium]
+08:00    Milo   Feeding (5 min) [priority: high]
+12:15    Milo   Litter box cleanup (15 min) [priority: medium]
+18:00    Leo    Evening walk (30 min) [priority: high]
+Total: 105 of 120 available minutes
+```
+
+What to notice:
+
+- **Recurrence:** completing Leo's daily Feeding added a new Feeding due the next day, and completing Milo's weekly Brushing added one due 7 days later.
+- **Sorting:** in *All tasks sorted by time*, Leo's tasks are mixed with Milo's in clock order, and Brushing (no time) is last for its day.
+- **Filtering:** *Milo's tasks only*, *Incomplete tasks, sorted* and *Completed tasks* each come from `filter_tasks`.
+- **Conflicts:** Morning walk and Medication clash for the same pet, and Leo's Vet call clashes with Milo's Feeding across pets.
+- **Today's Schedule:** today's unfinished tasks, from `filter_tasks` then `sort_by_time`. Completed tasks and tasks due on later days are left out, and the total is compared with the owner's available minutes. The two conflicts still appear here because nothing has resolved them; the CLI only reports conflicts, it doesn't fix them.

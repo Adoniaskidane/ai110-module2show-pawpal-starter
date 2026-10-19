@@ -1,0 +1,65 @@
+---
+config:
+  htmlLabels: false
+---
+classDiagram
+    direction TB
+
+    class Owner {
+        +name: str
+        +available_minutes: int
+        +day_start_minute: int
+        +preferences: List~str~
+        +pets: List~Pet~
+        +add_pet(pet)
+        +get_all_tasks() list[tuple[Pet, Task]]
+    }
+
+    class Pet {
+        +name: str
+        +species: str
+        +tasks: List~Task~
+        +add_task(task)
+        +remove_task(title)
+    }
+
+    class Task {
+        +title: str
+        +duration_minutes: int
+        +priority: str
+        +frequency: str
+        +completed: bool
+        +time: str
+        +due_date: date
+        +edit(duration_minutes, priority)
+        +mark_complete()
+        +minutes_after_midnight() int
+        +next_occurrence() Optional~Task~
+    }
+
+    class ScheduledTask {
+        +task: Task
+        +pet: Pet
+        +start_minute: int
+        +end_minute: int
+        +start_time() str
+    }
+
+    class Scheduler {
+        +mark_task_complete(pet, task) Optional~Task~
+        +detect_conflicts(owner) List~str~
+        +sort_by_time(tasks) list[tuple[Pet, Task]]
+        +filter_tasks(owner, pet_name, completed) list[tuple[Pet, Task]]
+        +generate_plan(owner, pet) List~ScheduledTask~
+        +explain_plan(plan) str
+    }
+
+    Owner "1" --> "0..*" Pet : has
+    Pet "1" *-- "0..*" Task : has
+    Task ..> Task : next_occurrence creates
+    Scheduler ..> Owner : reads pets + tasks
+    Scheduler ..> Pet : adds next occurrence
+    Scheduler ..> Task : sorts, filters, completes
+    Scheduler ..> ScheduledTask : creates
+    ScheduledTask --> Task : places
+    ScheduledTask --> Pet : for

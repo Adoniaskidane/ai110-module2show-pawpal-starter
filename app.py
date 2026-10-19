@@ -1,6 +1,10 @@
+from datetime import date
+
 import streamlit as st
 
-from pawpal_system import Owner, Pet, Task
+from pawpal_system import Owner, Pet, Scheduler, Task
+
+PRIORITY_LABELS = {"high": "🔴 high", "medium": "🟡 medium", "low": "🟢 low"}
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -78,63 +82,165 @@ st.markdown("### Tasks")
 if owner.pets:
     with st.form("add_task", clear_on_submit=True):
         pet_choice = st.selectbox("Pet", [p.name for p in owner.pets])
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             task_title = st.text_input("Task title", value="Morning walk")
         with col2:
             duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
         with col3:
-            priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
+            task_time = st.text_input("Start time (HH:MM)", placeholder="07:30, or leave blank")
+        col4, col5 = st.columns(2)
         with col4:
+            priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
+        with col5:
             frequency = st.selectbox("Frequency", ["daily", "weekly", "once"])
         if st.form_submit_button("Add task"):
-            pet = next(p for p in owner.pets if p.name == pet_choice)
-            pet.add_task(
-                Task(
-                    title=task_title,
-                    duration_minutes=int(duration),
-                    priority=priority,
-                    frequency=frequency,
-                )
+            new_task = Task(
+                title=task_title,
+                duration_minutes=int(duration),
+                priority=priority,
+                frequency=frequency,
+                time=task_time.strip(),
             )
-            st.success(f"Added '{task_title}' for {pet.name}.")
+            try:
+                if new_task.time:
+                    new_task.minutes_after_midnight()  # reject "7pm", "25:00", etc.
+            except ValueError:
+                st.error(f"'{task_time}' isn't a valid time. Use 24-hour HH:MM, like 07:30 or 18:00.")
+            else:
+                pet = next(p for p in owner.pets if p.name == pet_choice)
+                pet.add_task(new_task)
+                st.success(f"Added '{task_title}' for {pet.name}.")
 else:
     st.caption("Add a pet first, then you can give it tasks.")
 
-all_tasks = owner.get_all_tasks()
-if all_tasks:
-    st.write("Current tasks:")
-    st.table(
-        [
-            {
-                "pet": pet.name,
-                "title": task.title,
-                "duration_minutes": task.duration_minutes,
-                "priority": task.priority,
-                "frequency": task.frequency,
-                "done": task.completed,
-            }
-            for pet, task in all_tasks
-        ]
+scheduler = Scheduler()
+
+
+def task_rows(pairs):
+    """Turn (pet, task) pairs into table rows for st.table."""
+    return [
+        {
+            "date": task.due_date.strftime("%a %b %d"),
+            "time": task.time or "anytime",
+            "pet": pet.name,
+            "task": task.title,
+            "minutes": task.duration_minutes,
+            "priority": PRIORITY_LABELS.get(task.priority, task.priority),
+            "repeats": task.frequency,
+            "status": "✅ done" if task.completed else "⏳ to do",
+        }
+        for pet, task in pairs
+    ]
+
+
+if owner.get_all_tasks():
+    st.markdown("#### Find tasks")
+    col1, col2 = st.columns(2)
+    with col1:
+        pet_filter = st.selectbox("Show pet", ["All pets"] + [p.name for p in owner.pets])
+    with col2:
+        status_filter = st.radio("Status", ["To do", "Done", "All"], horizontal=True)
+
+    filtered = scheduler.filter_tasks(
+        owner,
+        pet_name=None if pet_filter == "All pets" else pet_filter,
+        completed={"To do": False, "Done": True, "All": None}[status_filter],
     )
+    if filtered:
+        st.caption(f"{len(filtered)} task(s), sorted by date and time. Tasks with no set time are listed last each day.")
+        st.table(task_rows(scheduler.sort_by_time(filtered)))
+    else:
+        st.info("No tasks match these filters.")
+
+    st.markdown("#### Update a task")
+    if "flash" in st.session_state:
+        st.success(st.session_state.pop("flash"))
+    open_tasks = scheduler.sort_by_time(scheduler.filter_tasks(owner, completed=False))
+    if open_tasks:
+        with st.form("update_task"):
+            choice = st.selectbox(
+                "Task",
+                range(len(open_tasks)),
+                format_func=lambda i: (
+                    f"{open_tasks[i][1].due_date:%b %d} {open_tasks[i][1].time or 'anytime'} - "
+                    f"{open_tasks[i][0].name}: {open_tasks[i][1].title}"
+                ),
+            )
+            new_time = st.text_input("New start time (HH:MM)", placeholder="leave blank for anytime")
+            col1, col2, col3 = st.columns(3)
+            done_clicked = col1.form_submit_button("Mark done")
+            time_clicked = col2.form_submit_button("Change time")
+            remove_clicked = col3.form_submit_button("Remove task")
+
+            pet, task = open_tasks[choice]
+            message = None
+            if done_clicked:
+                next_task = scheduler.mark_task_complete(pet, task)
+                message = f"Nice! '{task.title}' is done for {pet.name}."
+                if next_task:
+                    message += f" The next one is scheduled for {next_task.due_date:%A, %b %d}."
+            elif time_clicked:
+                old_time = task.time
+                task.time = new_time.strip()
+                try:
+                    if task.time:
+                        task.minutes_after_midnight()  # reject "7pm", "25:00", etc.
+                except ValueError:
+                    task.time = old_time
+                    st.error(f"'{new_time}' isn't a valid time. Use 24-hour HH:MM, like 07:30 or 18:00.")
+                else:
+                    message = f"Moved {pet.name}'s '{task.title}' to {task.time or 'anytime'}."
+            elif remove_clicked:
+                # Remove this exact task. Pet.remove_task(title) would also delete other
+                # tasks with the same title, like tomorrow's copy of a daily task.
+                pet.tasks.remove(task)
+                message = f"Removed {pet.name}'s '{task.title}'."
+            if message:
+                # Rerun so the tables above refresh; keep the message so it survives the rerun.
+                st.session_state.flash = message
+                st.rerun()
+    else:
+        st.success("Everything is done. 🎉")
 else:
     st.info("No tasks yet.")
 
 st.divider()
 
-st.subheader("Build Schedule")
-st.caption("This button should call your scheduling logic once you implement it.")
+st.subheader("Today's Schedule")
 
-if st.button("Generate schedule"):
+conflicts = scheduler.detect_conflicts(owner)
+if conflicts:
     st.warning(
-        "Not implemented yet. Next step: create your scheduling logic (classes/functions) and call it here."
+        f"**{len(conflicts)} scheduling conflict(s) found.** You can't be in two places at once, "
+        "so these tasks need attention:"
     )
-    st.markdown(
-        """
-Suggested approach:
-1. Design your UML (draft).
-2. Create class stubs (no logic).
-3. Implement scheduling behavior.
-4. Connect your scheduler here and display results.
-"""
+    for message in conflicts:
+        st.markdown(f"- {message.removeprefix('WARNING: ')}")
+    st.caption(
+        "💡 To fix a conflict, use **Update a task** above to give one of the tasks a "
+        "different start time, or mark it done if it's already taken care of."
     )
+elif owner.get_all_tasks():
+    st.success("No time conflicts. Every timed task has its own slot.")
+
+today = date.today()
+todays_tasks = [
+    (pet, task)
+    for pet, task in scheduler.filter_tasks(owner, completed=False)
+    if task.due_date == today
+]
+if todays_tasks:
+    total = sum(task.duration_minutes for _, task in todays_tasks)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Tasks today", len(todays_tasks))
+    col2.metric("Minutes needed", total)
+    col3.metric("Minutes available", owner.available_minutes)
+    if total > owner.available_minutes:
+        st.warning(
+            f"Today's tasks need {total} minutes, but only {owner.available_minutes} are available. "
+            "Consider moving a low-priority task to another day."
+        )
+    st.table(task_rows(scheduler.sort_by_time(todays_tasks)))
+else:
+    st.info("Nothing left to do today.")

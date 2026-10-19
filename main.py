@@ -1,19 +1,8 @@
-"""Temporary testing ground: build sample data and print today's schedule."""
+"""Command-line demo: build sample data and show each Scheduler feature."""
 
-from pawpal_system import Owner, Pet, ScheduledTask, Scheduler, Task
+from datetime import date
 
-
-def build_schedule(owner: Owner) -> list[ScheduledTask]:
-    """Place every pet's tasks back to back from the owner's day start.
-
-    Stand-in until Scheduler.generate_plan is implemented.
-    """
-    schedule = []
-    current = owner.day_start_minute
-    for pet, task in owner.get_all_tasks():
-        schedule.append(ScheduledTask(task=task, pet=pet, start_minute=current))
-        current += task.duration_minutes
-    return schedule
+from pawpal_system import Owner, Pet, Scheduler, Task
 
 
 def print_tasks(heading: str, pairs: list[tuple[Pet, Task]]) -> None:
@@ -68,13 +57,22 @@ def main() -> None:
     for warning in scheduler.detect_conflicts(owner) or ["  No conflicts found."]:
         print(f"  {warning}")
 
+    # Today's unfinished tasks in time order. Until Scheduler.generate_plan() exists,
+    # this doesn't drop low-priority tasks to fit the owner's time budget.
+    todays_tasks = [
+        (pet, task)
+        for pet, task in scheduler.filter_tasks(owner, completed=False)
+        if task.due_date == date.today()
+    ]
     print(f"\nToday's Schedule for {owner.name}")
     print("=" * 40)
-    for item in build_schedule(owner):
+    for pet, task in scheduler.sort_by_time(todays_tasks):
         print(
-            f"{item.start_time()}  {item.pet.name:<8} {item.task.title} "
-            f"({item.task.duration_minutes} min) [priority: {item.task.priority}]"
+            f"{task.time or 'anytime':<7}  {pet.name:<6} {task.title} "
+            f"({task.duration_minutes} min) [priority: {task.priority}]"
         )
+    total = sum(task.duration_minutes for _, task in todays_tasks)
+    print(f"Total: {total} of {owner.available_minutes} available minutes")
 
 if __name__ == "__main__":
     main()
