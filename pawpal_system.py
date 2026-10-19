@@ -131,9 +131,15 @@ class Scheduler:
             pet: The pet that owns the task; the next occurrence is added to it.
             task: The task being completed.
 
+        Completing a task that is already done does nothing, so a double click
+        can't queue a duplicate next occurrence.
+
         Returns:
-            The newly created next-occurrence Task, or None if the task doesn't repeat.
+            The newly created next-occurrence Task, or None if the task doesn't
+            repeat or was already completed.
         """
+        if task.completed:
+            return None
         task.mark_complete()
         next_task = task.next_occurrence()
         if next_task is not None:
@@ -184,10 +190,10 @@ class Scheduler:
     def sort_by_time(self, tasks: List[Tuple[Pet, Task]]) -> List[Tuple[Pet, Task]]:
         """Order (pet, task) pairs chronologically.
 
-        Sorts by due date, then by "HH:MM" time. Within each day, tasks with no set
-        time go last (the key's `time == ""` is False for timed tasks, and False
-        sorts before True). Zero-padded "HH:MM" strings sort correctly as plain text
-        ("07:30" < "18:00"), so no conversion to numbers is needed.
+        Sorts by due date, then by start time in minutes after midnight, so "7:30"
+        and "07:30" sort the same (comparing the raw text would put "7:30" after
+        "18:00"). Within each day, tasks with no set time or an invalid time go
+        last, in their original order.
 
         Args:
             tasks: (pet, task) pairs, e.g. from Owner.get_all_tasks() or filter_tasks().
@@ -195,7 +201,15 @@ class Scheduler:
         Returns:
             A new sorted list; the input list is not modified.
         """
-        return sorted(tasks, key=lambda pair: (pair[1].due_date, pair[1].time == "", pair[1].time))
+
+        def sort_key(pair: Tuple[Pet, Task]) -> Tuple[date, bool, int]:
+            task = pair[1]
+            try:
+                return (task.due_date, False, task.minutes_after_midnight())
+            except ValueError:  # no time set ("") or malformed
+                return (task.due_date, True, 0)
+
+        return sorted(tasks, key=sort_key)
 
     def filter_tasks(
         self,

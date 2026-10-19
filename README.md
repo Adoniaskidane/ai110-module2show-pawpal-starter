@@ -54,7 +54,7 @@ The logic layer lives in `pawpal_system.py` and is built from five classes:
 
 **How they work together:** an `Owner` holds `Pet`s, each `Pet` holds `Task`s, and code that needs every task asks the owner via `get_all_tasks()` instead of reaching into individual pets. Times are stored as minutes after midnight so tasks can be placed back to back with simple addition, then formatted as `HH:MM` only for display.
 
-`main.py` is a temporary demo that builds an owner with two pets and prints today's schedule. Until `Scheduler` is implemented, it uses a small helper that lists tasks back to back from the owner's day start (no sorting or time-budget check yet). `tests/test_pawpal.py` covers task completion and adding tasks to a pet.
+`main.py` is a temporary demo that builds an owner with two pets and prints today's schedule. Until `Scheduler` is implemented, it uses a small helper that lists tasks back to back from the owner's day start (no sorting or time-budget check yet). `tests/test_pawpal.py` covers sorting, filtering, conflict detection, and recurring tasks (see **Testing PawPal+** below).
 
 ## 🖥️ Sample Output
 
@@ -80,19 +80,47 @@ Today's Schedule for Jhon
 
 ## 🧪 Testing PawPal+
 
+Run the full suite from the project root (with the virtual environment activated):
+
 ```bash
-# Run the full test suite:
-pytest
-
-# Run with coverage:
-pytest --cov
+python -m pytest
 ```
 
-Sample test output:
+### What the tests cover
+
+The 37 tests in `tests/test_pawpal.py` cover both the happy path and edge cases for each scheduler feature:
+
+- **Sorting:** tasks come back in chronological order, by date first and then by time. Tasks with no time go last within their own day. Tasks with identical times keep their original order. `"7:30"` and `"07:30"` sort the same, and the input list is not modified.
+- **Recurrence:** completing a daily task creates a new, incomplete copy for the next day, and a weekly task repeats 7 days later. Dates roll over correctly at year end and in leap years. `"once"` tasks and unknown frequencies don't repeat, and completing a task twice doesn't create a duplicate.
+- **Conflict detection:** two tasks at the exact same time are flagged, as are partial overlaps, one task inside another, and overlaps between different pets. Back-to-back tasks and the same time on different days are not flagged. Completed and untimed tasks are ignored. An invalid time like `"25:00"` produces a warning instead of a crash.
+- **Filtering:** by pet name (case-insensitive), by completion status, or both.
+- **Empty data:** a pet with no tasks, an owner with no pets, an empty list, and a pet name that doesn't exist.
+- **Time parsing:** `"07:30"` converts to 450 minutes, and impossible times like `"25:00"`, `"12:60"` or `"7pm"` are rejected.
+
+All tests use a fixed date, so results don't depend on the day you run them.
+
+### Sample test output
 
 ```
-# Paste your pytest output here
+$ python -m pytest
+============================= test session starts ==============================
+platform darwin -- Python 3.13.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/adonias/Desktop/codepath/ai110-module2show-pawpal-starter
+plugins: anyio-4.15.1
+collected 37 items
+
+tests/test_pawpal.py .....................................               [100%]
+
+============================== 37 passed in 0.02s ==============================
 ```
+
+### Confidence level: ⭐⭐⭐⭐☆ (4/5)
+
+Sorting, filtering, conflict detection, and recurrence are well tested, including their edge cases. Writing the tests also uncovered two real bugs, which are now fixed: unpadded times like `"7:30"` sorted after `"18:00"`, and completing a task twice created a duplicate next occurrence. It's not 5 stars for three reasons:
+
+- `generate_plan()` and `explain_plan()` aren't implemented yet, so the owner's time budget and priorities aren't tested.
+- A task that runs past midnight (e.g. 23:30 for 60 minutes) isn't checked against tasks the next morning.
+- The Streamlit UI in `app.py` is only tested by hand.
 
 ## 📐 Smarter Scheduling
 
@@ -100,21 +128,26 @@ Beyond storing tasks, the `Scheduler` in `pawpal_system.py` can sort, filter, ch
 
 | Feature | Method(s) | Notes |
 |---------|-----------|-------|
-| Task sorting | `Scheduler.sort_by_time()` | By due date, then `HH:MM` time; tasks with no set time go last each day |
+| Task sorting | `Scheduler.sort_by_time()` | By due date, then start time in minutes; tasks with no set time go last each day |
 | Filtering | `Scheduler.filter_tasks()` | By pet name, completion status, or both |
 | Conflict handling | `Scheduler.detect_conflicts()`, `Task.minutes_after_midnight()` | Flags overlapping time windows (same or different pets) as warnings, never crashes |
 | Recurring tasks | `Scheduler.mark_task_complete()`, `Task.next_occurrence()` | Completing a daily/weekly task automatically creates the next one |
 
 ### Sorting: `Scheduler.sort_by_time(tasks)`
 
-Takes a list of `(pet, task)` pairs and returns a new list in chronological order: first by `due_date`, then by the task's `time` (`"HH:MM"`). It uses `sorted()` with a lambda key:
+Takes a list of `(pet, task)` pairs and returns a new list in chronological order: first by `due_date`, then by start time. It uses `sorted()` with a key function that converts each time with `Task.minutes_after_midnight()`:
 
 ```python
-sorted(tasks, key=lambda pair: (pair[1].due_date, pair[1].time == "", pair[1].time))
+def sort_key(pair):
+    task = pair[1]
+    try:
+        return (task.due_date, False, task.minutes_after_midnight())
+    except ValueError:  # no time set ("") or malformed
+        return (task.due_date, True, 0)
 ```
 
-- Zero-padded `"HH:MM"` strings sort correctly as plain text (`"07:30" < "18:00"`), so no conversion is needed.
-- `time == ""` is `False` for timed tasks and `True` for untimed ones; since `False` sorts first, tasks with no set time land at the end of each day.
+- Sorting on minutes instead of the raw text means `"7:30"` and `"07:30"` sort the same. As plain text, `"7:30"` would sort after `"18:00"`.
+- The middle value is `False` for timed tasks and `True` for untimed or invalid ones. Since `False` sorts first, tasks with no usable time land at the end of each day.
 - The input list is not modified.
 
 ### Filtering: `Scheduler.filter_tasks(owner, pet_name=None, completed=None)`
@@ -144,6 +177,7 @@ Marks a task done and, if it repeats, adds its next occurrence to the pet.
 - `Task.next_occurrence()` builds the copy with `dataclasses.replace`, keeping the title, duration, priority, and time but resetting `completed` to `False`.
 - The new due date is calculated with `timedelta`: `+ timedelta(days=1)` for `"daily"`, `+ timedelta(weeks=1)` for `"weekly"`. `timedelta` handles month and year rollover (Dec 31 → Jan 1).
 - `"once"` tasks are just marked complete; no new task is created and the method returns `None`.
+- Completing a task that is already done does nothing and returns `None`, so a double click can't create a duplicate next occurrence.
 - Calling `Task.mark_complete()` directly still only marks the task done, without creating a next occurrence.
 
 ## 📸 Demo Walkthrough
